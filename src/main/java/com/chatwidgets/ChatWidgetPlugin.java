@@ -26,6 +26,7 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.ResizeableChanged;
+import net.runelite.api.events.ScriptPostFired;
 import net.runelite.api.events.VarClientIntChanged;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
@@ -86,6 +87,8 @@ public class ChatWidgetPlugin extends Plugin {
     private static final String PLUGIN_VERSION = "1.2.0";
     private static final String LAST_UPDATE_NOTICE_VERSION_KEY = "lastUpdateNoticeVersion";
     private static final int MAX_POOL_SIZE = 200;
+    // cs2 [proc,rebuildpmbox]: redraws the split PM lines, with the system update timer as line 0.
+    private static final int REBUILD_PM_BOX_SCRIPT = 89;
 
     // enum_63: base-36 broadcast link key -> URL (cs2 chat_broadcast_parseurl).
     private static final int BROADCAST_URL_ENUM = 63;
@@ -537,6 +540,14 @@ public class ChatWidgetPlugin extends Plugin {
     @Subscribe
     public void onWidgetLoaded(WidgetLoaded event) {
         if (event.getGroupId() == InterfaceID.PM_CHAT && pmWidgetsHidden) {
+            setPmWidgetsHidden(true);
+        }
+    }
+
+    @Subscribe
+    public void onScriptPostFired(ScriptPostFired event) {
+        // The rebuild unhides the lines it draws, and the update timer can appear or go away.
+        if (event.getScriptId() == REBUILD_PM_BOX_SCRIPT && pmWidgetsHidden) {
             setPmWidgetsHidden(true);
         }
     }
@@ -1168,18 +1179,24 @@ public class ChatWidgetPlugin extends Plugin {
     }
 
     private void setPmWidgetsHidden(boolean hidden) {
-        setGameframePmContainerHidden(InterfaceID.TOPLEVEL, 36, hidden);
-        setGameframePmContainerHidden(InterfaceID.TOPLEVEL_OSRS_STRETCH, 93, hidden);
-        setGameframePmContainerHidden(InterfaceID.TOPLEVEL_PRE_EOC, 90, hidden);
-
         Widget pmContainer = client.getWidget(InterfaceID.PM_CHAT, 0);
+        Widget[] dynamicChildren = pmContainer != null ? pmContainer.getDynamicChildren() : null;
+        // rebuildpmbox draws each line as 4 children; line 0 is the system update timer when one is running.
+        boolean showTimer = hidden && dynamicChildren != null && dynamicChildren.length > 0
+                && dynamicChildren[0] != null && !dynamicChildren[0].isSelfHidden()
+                && dynamicChildren[0].getText().startsWith("System update in");
+        boolean hideContainers = hidden && !showTimer;
+
+        setGameframePmContainerHidden(InterfaceID.TOPLEVEL, 36, hideContainers);
+        setGameframePmContainerHidden(InterfaceID.TOPLEVEL_OSRS_STRETCH, 93, hideContainers);
+        setGameframePmContainerHidden(InterfaceID.TOPLEVEL_PRE_EOC, 90, hideContainers);
+
         if (pmContainer != null) {
-            pmContainer.setHidden(hidden);
-            Widget[] dynamicChildren = pmContainer.getDynamicChildren();
+            pmContainer.setHidden(hideContainers);
             if (dynamicChildren != null) {
-                for (Widget child : dynamicChildren) {
-                    if (child != null) {
-                        child.setHidden(hidden);
+                for (int i = showTimer ? 4 : 0; i < dynamicChildren.length; i++) {
+                    if (dynamicChildren[i] != null) {
+                        dynamicChildren[i].setHidden(hidden);
                     }
                 }
             }
